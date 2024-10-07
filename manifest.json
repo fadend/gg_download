@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "GG Download",
+  "description": "Download Posts from Google Groups",
+  "version": "1.0",
+  "action": {
+    "default_title": "Download Posts",
+    "default_icon": "gg_download.png"
+  },
+  "permissions": ["activeTab", "downloads", "pageCapture", "scripting"],
+  "background": {
+    "service_worker": "scripts/service-worker.js"
+  }
+}
