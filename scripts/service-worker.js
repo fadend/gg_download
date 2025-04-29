@@ -29,7 +29,10 @@ function findPostUrls() {
     return new Promise((resolve, reject) => { resolve(uniqueUrls); });
 }
 
-function clickNext() {
+// Click the "Next page" button to get to the next page of the index.
+// To be used with chrome.scripting.executeScript.
+// Returns a Promise to pass back whether the click happened.
+function clickNextPage() {
     const nextButton = document.querySelector('[aria-label="Next page"]');
     let clicked = false;
     if (nextButton && window.getComputedStyle(nextButton).cursor === 'pointer') {
@@ -49,6 +52,7 @@ function delay(millis) {
     });
 }
 
+// Gets the URLs for all posts, starting from the first page of the index.
 async function getPostUrlsAcrossIndex(tab) {
     if (!/^https:\/\/groups\.google\.com\/g\/[^\/]+$/.test(tab.url)) {
         throw new Error(`Can only run on index page for a Google Group, not ${tab.url}`);
@@ -69,7 +73,7 @@ async function getPostUrlsAcrossIndex(tab) {
         }
         const clickedResult = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            func: clickNext
+            func: clickNextPage
         });
         if (!clickedResult[0].result) {
             break;
@@ -79,23 +83,57 @@ async function getPostUrlsAcrossIndex(tab) {
     return Array.from(urls);
 }
 
-async function downloadUrlCapture(tab_id, url) {
+// Load the given URL in the given tab.
+function loadUrl(tabId, url) {
+    return new Promise((resolve, reject) => {
+        // Thank you, https://stackoverflow.com/a/18436493.
+        chrome.tabs.update(tabId, { url }, (tab) => {
+            const listener = (targetTabId, changeInfo, targetTab) => {
+                if (targetTabId === tab.id && changeInfo.status === 'complete') {
+                    chrome.tabs.onUpdated.removeListener(listener);
+                    if (targetTab.url === url) {
+                        resolve(targetTab);
+                    } else {
+                        reject(new Error(`completed with wrong URL: ${targetTab.url} != ${url}`));
+                    }
+                }
+            };
+            chrome.tabs.onUpdated.addListener(listener);
+        });
+    });
+}
+
+async function downloadUrlCapture(tab, url) {
     try {
-        chrome.tabs.update(tab_id, { url });
-        // Wait a teeny bit for the update to actually happen.
-        // TODO: is this actually helpful?
-        await delay(10);
+        const updateStartTimeSeconds = (+new Date()) / 1000;
+        let newTab = await loadUrl(tab.id, url);
+        const updateElapsedTimeSeconds = Math.round((+new Date()) / 1000 - updateStartTimeSeconds);
+        if (newTab.url !== url) {
+            console.log(`Failed to get URL ${url} in tab ${newTab.id} after ${updateElapsedTimeSeconds} seconds; have ${newTab.url}`);
+            return false;
+        } else {
+            console.log(`Got expected URL ${url} after ${updateElapsedTimeSeconds} seconds`);
+        }
         await chrome.scripting.executeScript({
-            target: { tabId: tab_id },
+            target: { tabId: newTab.id },
             func: fullyLoaded
         });
-        const blob = await chrome.pageCapture.saveAsMHTML({ tabId: tab_id });
+        const blob = await chrome.pageCapture.saveAsMHTML({ tabId: newTab.id });
         const content = await blob.text();
+        const match = /Snapshot-Content-Location: (https:\/\/groups\.google\.com\/g\/[^\/]+\/c\/[^\r\n]+)/.exec(content);
+        if (!match) {
+            console.log(`Did not find Snapshot-Content-Location in download for ${url}`);
+            return false;
+        }
+        if (match[1] !== url) {
+            console.log(`Download URL <${match[1]}> does not match <${url}>`);
+            return false;
+        }
         const dataUrl = "data:application/x-mimearchive;base64," + btoa(content);
         const postName = url.split('/').pop();
         await chrome.downloads.download({ url: dataUrl, filename: `${postName}.mhtml` });
     } catch (error) {
-        console.log(`Failed to download ${url}`, error);
+        console.log(`Failed to download ${url}`, error, error.stack);
         return false;
     }
     return true;
@@ -105,27 +143,40 @@ chrome.action.onClicked.addListener(async (tab) => {
     const urls = await getPostUrlsAcrossIndex(tab);
     console.log(`Found ${urls.length} URLs`);
     console.log(`URLs: ${urls}`);
-    let first = true;
     let downloadCount = 0;
+    let numSuccesses = 0;
+    let numFailures = 0;
+    let failedUrls = [];
     for (let url of urls) {
         console.log('Processing URL ', url);
-        if (!first) {
+        if (downloadCount > 0) {
             // Add some delay to be friendlier to Google's servers.
             await delay(7000 + 23000 * Math.random());
-        } else {
-            first = false;
         }
         let successful = false;
         for (let tries = 0; tries < 3; tries++) {
-            successful = downloadUrlCapture(tab.id, url);
+            if (tries > 0) {
+                await delay(500 + 1000 * Math.random());
+            }
+            successful = await downloadUrlCapture(tab, url);
             if (successful) {
+                console.log(`Succeeded after ${tries + 1} attempt(s)`);
                 break;
+            } else {
+                console.log(`Attempt #${tries + 1} for ${url} failed`);
             }
         }
         if (!successful) {
-            console.log(`All attempts for ${url} failed. Continuing.`);
+            console.log(`All attempts for ${url} failed.`);
+            numFailures++;
+            failedUrls.push(url);
+        } else {
+            numSuccesses++;
         }
         downloadCount++;
-        console.log('Download #', downloadCount);
+        console.log(`Finished with download #${downloadCount}`);
     }
+    console.log(`Num successful: ${numSuccesses}`);
+    console.log(`Num failures: ${numFailures}`);
+    console.log('Failed URLs', failedUrls);
 });
