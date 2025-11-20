@@ -15,3 +15,7 @@ You can read more about this format here: https://en.wikipedia.org/wiki/MHTML.
 
 I have created this for a specific project and so will likely not develop it much beyond what I need,
 but I hope you might find it useful too.
+
+## Acknowledgments
+
+Formatted with [prettier](https://prettier.io/).

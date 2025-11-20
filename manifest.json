@@ -5,10 +5,8 @@
   "version": "1.1",
   "action": {
     "default_title": "Download Posts",
-    "default_icon": "gg_download.png"
+    "default_icon": "gg_download.png",
+    "default_popup": "popup.html"
   },
-  "permissions": ["activeTab", "downloads", "pageCapture", "scripting", "tabs"],
-  "background": {
-    "service_worker": "scripts/service-worker.js"
-  }
+  "permissions": ["activeTab", "downloads", "pageCapture", "scripting", "tabs"]
 }
